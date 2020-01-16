@@ -1,5 +1,5 @@
 .vs
 server/Debug
 client/Debug
-!*/server/Debug/server.exe
-!*/client/Debug/client.exe
+/server/Debug/server.exe
+!client/Debug/client.exe
