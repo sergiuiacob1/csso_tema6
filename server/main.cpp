@@ -4,12 +4,20 @@
 #include <windows.h>
 #include <errno.h>
 #include <Ws2tcpip.h>
+#include <stdio.h>
+#include <Strsafe.h>
+#include <Pathcch.h>
+#include <Shlwapi.h>
+#include <fileapi.h>
 #pragma comment(lib,"ws2_32.lib") //Winsock Library
 #define PORT 3001
 #define DMAX_MSG 2048
 #define CHUNK_SIZE 1024
+#define MAX_PATH_LENGTH 1024
 
 using namespace std;
+
+string clientResponse;
 
 
 SOCKET sd;
@@ -17,6 +25,8 @@ struct Parameters {
 	char command[DMAX_MSG];
 	struct sockaddr_in* client;
 };
+
+LPCSTR pathToDirectoryParent = "C:\\Users\\sergiu\\Desktop";
 
 void initWSA();
 SOCKET createSocket();
@@ -27,6 +37,16 @@ void createCommandThread(const char*, const struct sockaddr_in*);
 DWORD WINAPI executeCommand(LPVOID);
 bool createFile(string);
 bool appendToFile(string);
+bool deleteFile(string);
+bool createRegistryKey(string);
+bool deleteRegistryKey(string);
+bool runProcess(string);
+bool listDir(string);
+void unifyPaths(LPSTR, LPCSTR, LPCSTR, bool starAtTheEnd = true);
+void listFiles(LPCSTR, int);
+bool isDirectory(WIN32_FIND_DATA ffd) {
+	return (ffd.dwFileAttributes) & FILE_ATTRIBUTE_DIRECTORY;
+}
 
 
 int main() {
@@ -99,20 +119,37 @@ DWORD WINAPI executeCommand(LPVOID pPointer) {
 	struct Parameters* params = (struct Parameters*) pPointer;
 	string cmd = params->command;
 	bool success = true;
+	clientResponse.clear();
 
 	cout << "Executing command " << cmd << '\n';
 
 	if (cmd.find("createfile") == 0) {
-		if (createFile(cmd) != 0)
-			success = false;
+		success = createFile(cmd);
 	}
 	else if (cmd.find("append") == 0) {
-		if (appendToFile(cmd) != 0)
-			success = false;
+		success = appendToFile(cmd);
+	}
+	else if (cmd.find("deletefile") == 0) {
+		success = deleteFile(cmd);
+	}
+	else if (cmd.find("createkey") == 0) {
+		success = createRegistryKey(cmd);
+	}
+	else if (cmd.find("deletekey") == 0) {
+		success = deleteRegistryKey(cmd);
+	}
+	else if (cmd.find("run") == 0) {
+		success = runProcess(cmd);
+	}
+	else if (cmd.find("listdir") == 0) {
+		success = listDir(cmd);
 	}
 
 	if (success) {
-		sendMessage(sd, params->client, "Command executed successfully");
+		if (cmd.find("listdir") == 0)
+			sendMessage(sd, params->client, clientResponse.c_str());
+		else
+			sendMessage(sd, params->client, "Command executed successfully\n");
 		return 0;
 	}
 	else
@@ -143,6 +180,12 @@ bool createFile(string cmd) {
 	return true;
 }
 
+bool deleteFile(string cmd) {
+	string fileName = cmd.substr(strlen("createfile "));
+	cout << "Deleting file " << fileName << '\n';
+	return DeleteFile(fileName.c_str());
+}
+
 bool appendToFile(string cmd) {
 	string aux = cmd.substr(strlen("append "));
 	string continut = aux.substr(aux.find(" ") + 1);
@@ -170,6 +213,113 @@ bool appendToFile(string cmd) {
 	);
 	CloseHandle(hFile);
 	return res;
+}
+
+bool createRegistryKey(string cmd) {
+	DWORD disposition = 0;
+	HKEY hKey;
+	string reg = cmd.substr(strlen("createkey "));
+	return RegCreateKeyEx(
+		HKEY_CURRENT_USER,
+		reg.c_str(),
+		0,
+		NULL,
+		REG_OPTION_NON_VOLATILE,
+		KEY_READ | KEY_WRITE,
+		NULL,
+		&hKey,
+		&disposition
+	);
+}
+
+bool deleteRegistryKey(string cmd) {
+	HKEY hKey;
+	string reg = cmd.substr(strlen("deletekey "));
+
+	if (RegOpenKeyEx(HKEY_CURRENT_USER, 0, 0, KEY_READ, &hKey) != 0)
+		return false;
+	return RegDeleteKey(hKey, reg.c_str());
+}
+
+bool runProcess(string cmd) {
+	PROCESS_INFORMATION pi;
+	STARTUPINFO si;
+	memset(&si, 0, sizeof(si));
+	si.cb = sizeof(si);
+	string processPath = cmd.substr(strlen("run "));
+
+	return CreateProcess(processPath.c_str(), NULL, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
+}
+
+bool listDir(string cmd) {
+	string path = cmd.substr(strlen("listdir "));
+	listFiles(path.c_str(), 0);
+	return true;
+}
+
+void listFiles(LPCSTR pathSuffix, int tabs) {
+	WIN32_FIND_DATA ffd;
+	HANDLE hFile;
+	LPSTR currentPath = new char[MAX_PATH_LENGTH];
+
+	unifyPaths(currentPath, pathToDirectoryParent, pathSuffix);
+
+	hFile = FindFirstFileA(currentPath, &ffd);
+	if (hFile == INVALID_HANDLE_VALUE) {
+		printf("Could not acquire handle for %s\n", currentPath);
+		return;
+	}
+	do {
+		if (strcmp(ffd.cFileName, ".") == 0 || strcmp(ffd.cFileName, "..") == 0)
+			continue;
+		if (isDirectory(ffd)) {
+			LPSTR newPath = new char[MAX_PATH_LENGTH];
+			unifyPaths(newPath, pathSuffix, ffd.cFileName, false);
+
+			listFiles((LPCSTR)newPath, tabs + 1);
+		}
+		else
+		{
+			LPSTR newPath = new char[MAX_PATH_LENGTH];
+			unifyPaths(newPath, pathSuffix, ffd.cFileName, false);
+
+			for (int i = 0; i < tabs; ++i)
+				clientResponse += "    ";
+			clientResponse += newPath;
+			clientResponse += "\n";
+		}
+	} while (FindNextFileA(hFile, &ffd));
+
+	FindClose(hFile);
+}
+
+void unifyPaths(LPSTR newPath, LPCSTR path1, LPCSTR path2, bool starAtTheEnd) {
+	// copy without the * at the end
+
+	size_t len = strlen(path1);
+	if (len > 0) {
+		if (path1[len - 1] == '*')
+			--len;
+
+		StringCchCopyN(newPath, MAX_PATH_LENGTH, path1, len);
+		if (newPath[strlen(newPath) - 1] != '\\')
+			StringCchCat(newPath, MAX_PATH_LENGTH, "\\");
+	}
+	else {
+		StringCchCopy(newPath, MAX_PATH_LENGTH, "");
+	}
+
+	len = strlen(path2);
+	if (path2[len - 1] == '\\')
+		--len;
+	// append the second string without '\' at the end
+	StringCchCatN(newPath, MAX_PATH_LENGTH, path2, len);
+	if (starAtTheEnd == true) {
+		if (newPath[strlen(newPath) - 1] == '\\')
+			StringCchCat(newPath, MAX_PATH_LENGTH, "*");
+		else
+			StringCchCat(newPath, MAX_PATH_LENGTH, "\\*");
+	}
 }
 
 void initWSA() {

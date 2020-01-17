@@ -90,7 +90,7 @@ void sendCommand(string command) {
 		return;
 	}
 
-	cout << "Response: " << buffer << '\n';
+	cout << "Response:\n" << buffer << '\n';
 
 }
 
