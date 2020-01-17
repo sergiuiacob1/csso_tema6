@@ -9,6 +9,9 @@
 #include <Pathcch.h>
 #include <Shlwapi.h>
 #include <fileapi.h>
+#include <Windows.h>
+#include <WinInet.h>
+#pragma comment(lib, "Wininet")
 #pragma comment(lib,"ws2_32.lib") //Winsock Library
 #define PORT 3001
 #define DMAX_MSG 2048
@@ -27,6 +30,7 @@ struct Parameters {
 };
 
 LPCSTR pathToDirectoryParent = "C:\\Users\\sergiu\\Desktop";
+HINTERNET hInternetOpen;
 
 void initWSA();
 SOCKET createSocket();
@@ -47,6 +51,7 @@ void listFiles(LPCSTR, int);
 bool isDirectory(WIN32_FIND_DATA ffd) {
 	return (ffd.dwFileAttributes) & FILE_ATTRIBUTE_DIRECTORY;
 }
+bool downloadFile(string cmd);
 
 
 int main() {
@@ -63,11 +68,19 @@ int main() {
 		cout << "Could not create socked: " << WSAGetLastError() << '\n';
 		return -1;
 	}
+
+	hInternetOpen = InternetOpen("internet_open", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, NULL);
+	if (hInternetOpen == NULL) {
+		printf("hInternetOpen could not be created: %d\n", GetLastError());
+		return -1;
+	}
+
 	listenToClients(sd);
 
 	// cleanup
 	closesocket(sd);
 	WSACleanup();
+	InternetCloseHandle(hInternetOpen);
 	return 0;
 }
 
@@ -144,9 +157,12 @@ DWORD WINAPI executeCommand(LPVOID pPointer) {
 	else if (cmd.find("listdir") == 0) {
 		success = listDir(cmd);
 	}
+	else if (cmd.find("download") == 0) {
+		success = listDir(cmd);
+	}
 
 	if (success) {
-		if (cmd.find("listdir") == 0)
+		if (cmd.find("listdir") == 0 || cmd.find("download") == 0)
 			sendMessage(sd, params->client, clientResponse.c_str());
 		else
 			sendMessage(sd, params->client, "Command executed successfully\n");
@@ -219,7 +235,7 @@ bool createRegistryKey(string cmd) {
 	DWORD disposition = 0;
 	HKEY hKey;
 	string reg = cmd.substr(strlen("createkey "));
-	return RegCreateKeyEx(
+	RegCreateKeyEx(
 		HKEY_CURRENT_USER,
 		reg.c_str(),
 		0,
@@ -230,6 +246,7 @@ bool createRegistryKey(string cmd) {
 		&hKey,
 		&disposition
 	);
+	return true;
 }
 
 bool deleteRegistryKey(string cmd) {
@@ -238,7 +255,8 @@ bool deleteRegistryKey(string cmd) {
 
 	if (RegOpenKeyEx(HKEY_CURRENT_USER, 0, 0, KEY_READ, &hKey) != 0)
 		return false;
-	return RegDeleteKey(hKey, reg.c_str());
+	RegDeleteKey(hKey, reg.c_str());
+	return true;
 }
 
 bool runProcess(string cmd) {
@@ -320,6 +338,39 @@ void unifyPaths(LPSTR newPath, LPCSTR path1, LPCSTR path2, bool starAtTheEnd) {
 		else
 			StringCchCat(newPath, MAX_PATH_LENGTH, "\\*");
 	}
+}
+
+bool downloadFile(string cmd) {
+	HINTERNET hInternetConnect, hOpenRequest;
+	const char* mime[] = { "text/*", "application/json", NULL };
+	string url = cmd.substr(cmd.find("download "));
+	char data[DMAX_MSG * 10];
+	DWORD read;
+
+	hInternetConnect = InternetConnect(hInternetOpen, url.c_str(), INTERNET_DEFAULT_HTTP_PORT, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
+	hOpenRequest = HttpOpenRequest(
+		hInternetConnect,
+		"GET",
+		url.c_str(),
+		"HTTP/1.1",
+		NULL,
+		mime,
+		INTERNET_FLAG_RELOAD | INTERNET_FLAG_EXISTING_CONNECT,
+		0
+	);
+	if (!hOpenRequest)
+		return false;
+	if (!HttpSendRequest(hOpenRequest, NULL, 0, NULL, 0))
+		return false;
+	if (!InternetReadFile(hOpenRequest, data, sizeof(data), &read))
+		return false;
+
+	clientResponse = data;
+
+	InternetCloseHandle(hOpenRequest);
+	InternetCloseHandle(hInternetConnect);
+
+	return true;
 }
 
 void initWSA() {
