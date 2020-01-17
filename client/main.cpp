@@ -16,18 +16,19 @@ void initWSA();
 void createConnectionToServer();
 int readMessage(const SOCKET&, const struct sockaddr_in*, const char*);
 bool sendMessage(const SOCKET&, const struct sockaddr_in*, const char*);
-void sendCommands();
+void sendCommand(string);
 
 SOCKET sd;
 struct sockaddr_in server;
 
-int main() {
+int main(int argc, char* argv[]) {
+	string command;
 	cout << "Initializing WSA\n";
 	try {
 		initWSA();
 	}
 	catch (exception e) {
-		cout << "Something failed " << GetLastError();
+		cout << "Something failed " << WSAGetLastError();
 	}
 	cout << "Connecting to server...\n";
 	try {
@@ -38,8 +39,14 @@ int main() {
 		return -1;
 	}
 
-	// send commands
-	sendCommands();
+	for (int i = 1; i < argc; ++i) {
+		command += argv[i];
+		if (i < argc - 1)
+			command += " ";
+	}
+
+	// send command
+	sendCommand(command);
 
 	// cleanup
 	closesocket(sd);
@@ -63,31 +70,28 @@ bool sendMessage(const SOCKET& sd, const struct sockaddr_in* conn, const char* m
 	return true;
 }
 
-void sendCommands() {
+void sendCommand(string command) {
 	char buffer[DMAX_MSG];
 	int len, slen = sizeof(server);
-	while (1) {
-		cout << "Enter command: ";
-		cin >> buffer;
 
-		// trimit catre server
-		if (sendto(sd, buffer, strlen(buffer), 0, (struct sockaddr*) & server, slen) == SOCKET_ERROR)
-		{
-			cout << "Could not send message to server: " << GetLastError() << "\n";
-			continue;
-		}
-		cout << "Command sent\n";
-
-		// primesc un raspuns
-
-		if ((len = recvfrom(sd, buffer, DMAX_MSG, 0, (struct sockaddr*) & server, &slen)) == SOCKET_ERROR)
-		{
-			cout << "recvfrom() function failed: " << GetLastError() << '\n';
-			continue;
-		}
-
-		cout << "Response: " << buffer << '\n';
+	// trimit catre server
+	if (sendMessage(sd, &server, command.c_str()) == false)
+	{
+		cout << "Could not send message to server: " << WSAGetLastError() << "\n";
+		return;
 	}
+	cout << "Command sent\n";
+
+	// primesc un raspuns
+	len = readMessage(sd, &server, buffer);
+	if (len == SOCKET_ERROR)
+	{
+		cout << "recvfrom() function failed: " << WSAGetLastError() << '\n';
+		return;
+	}
+
+	cout << "Response: " << buffer << '\n';
+
 }
 
 void initWSA() {
